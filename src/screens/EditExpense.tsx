@@ -33,9 +33,9 @@ export function EditExpense() {
         summaryFirst
         saveFromSummary={false}
         actions={<IconButton icon="trash" label="Delete expense" tone="danger" onClick={() => setConfirmDelete(true)} />}
-        onSaved={() => {
+        onSaved={(_id, _total, warning) => {
           haptic()
-          toast('Changes saved')
+          toast(warning ?? 'Changes saved')
           navigate(-1)
         }}
         onCancel={() => navigate(-1)}

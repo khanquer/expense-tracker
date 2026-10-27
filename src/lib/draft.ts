@@ -1,6 +1,7 @@
 import {
   db,
   emptyFees,
+  getSetting,
   newId,
   FALLBACK_CATEGORY_ID,
   type Expense,
@@ -9,6 +10,7 @@ import {
   type Product,
 } from '../db'
 import { nameKey, round2, todayIso } from './format'
+import { withTimeout } from './async'
 
 export interface DraftItem {
   /** Stable key for React lists; the saved item id when editing. */
@@ -147,21 +149,24 @@ async function findProductByName(name: string) {
   return db.products.filter((p) => nameKey(p.name) === key).first()
 }
 
-/** Writes the draft (new or edited) and updates learned products. Returns the expense id. */
-export async function saveDraft(d: Draft): Promise<string> {
+export interface SaveResult {
+  id: string
+  /** Set when the expense saved but something optional (the receipt photo) didn't. */
+  warning?: string
+}
+
+/**
+ * Writes the draft (new or edited) and updates learned products. The expense is written on its
+ * own first; receipt photos are an optional extra stored afterwards, so they can never hold up
+ * or lose the expense.
+ */
+export async function saveDraft(d: Draft): Promise<SaveResult> {
   const items = d.items.filter((i) => i.name.trim() || i.price)
   const now = Date.now()
   const expenseId = d.id ?? newId()
+  const existing = d.id ? await db.expenses.get(d.id) : undefined
 
-  return db.transaction('rw', [db.expenses, db.items, db.products, db.aliases, db.images], async () => {
-    const newImageIds: string[] = []
-    for (const blob of d.newImages) {
-      const id = newId()
-      await db.images.add({ id, blob, createdAt: now })
-      newImageIds.push(id)
-    }
-
-    const existing = d.id ? await db.expenses.get(d.id) : undefined
+  await db.transaction('rw', [db.expenses, db.items, db.products, db.aliases], async () => {
     const expense: Expense = {
       id: expenseId,
       date: d.date,
@@ -170,7 +175,7 @@ export async function saveDraft(d: Draft): Promise<string> {
       total: round2(d.total),
       fees: d.fees,
       note: d.note.trim(),
-      imageIds: [...d.imageIds, ...newImageIds],
+      imageIds: d.imageIds,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     }
@@ -201,14 +206,31 @@ export async function saveDraft(d: Draft): Promise<string> {
       }
       await db.items.put(row)
     }
-
-    // Drop images the user removed while editing.
-    if (existing) {
-      const removed = existing.imageIds.filter((id) => !expense.imageIds.includes(id))
-      await db.images.bulkDelete(removed)
-    }
-    return expenseId
   })
+
+  // Images the user removed while editing.
+  const removed = existing?.imageIds.filter((id) => !d.imageIds.includes(id)) ?? []
+  if (removed.length) await db.images.bulkDelete(removed)
+
+  if (d.newImages.length && (await getSetting('keepImages')) === '1') {
+    try {
+      const ids = await withTimeout(storeImages(d.newImages, now), 10_000, 'Storing the photo timed out')
+      await db.expenses.update(expenseId, { imageIds: [...d.imageIds, ...ids] })
+    } catch (err) {
+      console.warn('receipt photo not kept', err)
+      return { id: expenseId, warning: "Saved, but the receipt photo couldn't be kept." }
+    }
+  }
+  return { id: expenseId }
+}
+
+async function storeImages(blobs: Blob[], now: number): Promise<string[]> {
+  // Read into memory before touching the database.
+  const rows = await Promise.all(
+    blobs.map(async (b) => ({ id: newId(), data: await b.arrayBuffer(), type: b.type || 'image/jpeg', createdAt: now })),
+  )
+  await db.images.bulkAdd(rows)
+  return rows.map((r) => r.id)
 }
 
 /** Finds or creates the product for an item and remembers the bill name → product mapping. */

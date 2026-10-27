@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { db, emptyFees } from '../../db'
+import { db, emptyFees, imageBlob, setSetting } from '../../db'
 import { allocate, applyLearning, emptyDraft, emptyItem, saveDraft, totalMismatch, loadDraft, deleteExpense } from '../draft'
 
 describe('allocate', () => {
@@ -47,7 +47,7 @@ describe('saveDraft / applyLearning', () => {
         { ...emptyItem('groceries'), name: 'Harvest Gold Bread', product: 'White bread', price: 60 },
       ],
     }
-    const id = await saveDraft(draft)
+    const { id } = await saveDraft(draft)
     const items = await db.items.where('expenseId').equals(id).toArray()
     expect(items.map((i) => i.effective).sort()).toEqual([70, 70])
     expect(await db.products.count()).toBe(2)
@@ -70,8 +70,24 @@ describe('saveDraft / applyLearning', () => {
     expect(await db.products.count()).toBe(1)
   })
 
+  it('does not keep receipt photos unless asked to', async () => {
+    const photo = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/jpeg' })
+    const draft = { ...emptyDraft(), total: 95, newImages: [photo], items: [{ ...emptyItem('dining-out'), name: 'Parotta', price: 95 }] }
+
+    const first = await saveDraft(draft)
+    expect(first.warning).toBeUndefined()
+    expect((await db.expenses.get(first.id))!.imageIds).toEqual([])
+    expect(await db.images.count()).toBe(0)
+
+    await setSetting('keepImages', '1')
+    const second = await saveDraft({ ...draft, items: [{ ...emptyItem('dining-out'), name: 'Parotta', price: 95 }] })
+    const [imageId] = (await db.expenses.get(second.id))!.imageIds
+    const stored = await imageBlob((await db.images.get(imageId))!).arrayBuffer()
+    expect([...new Uint8Array(stored)]).toEqual([1, 2, 3])
+  })
+
   it('round-trips an edit and deletes cleanly', async () => {
-    const id = await saveDraft({ ...emptyDraft(), merchant: 'Cafe', total: 200, items: [{ ...emptyItem('dining-out'), name: 'Coffee', price: 200 }] })
+    const { id } = await saveDraft({ ...emptyDraft(), merchant: 'Cafe', total: 200, items: [{ ...emptyItem('dining-out'), name: 'Coffee', price: 200 }] })
     const loaded = (await loadDraft(id))!
     await saveDraft({ ...loaded, total: 250, items: [...loaded.items, { ...emptyItem('dining-out'), name: 'Cake', price: 50 }] })
     expect(await db.items.where('expenseId').equals(id).count()).toBe(2)

@@ -1,4 +1,4 @@
-import { db } from '../db'
+import { db, imageBlob } from '../db'
 import { blobToBase64 } from './image'
 import { todayIso } from './format'
 
@@ -17,12 +17,10 @@ export async function exportBackup(includeImages: boolean): Promise<Blob> {
   ])
   const images = includeImages
     ? await Promise.all(
-        (await db.images.toArray()).map(async (i) => ({
-          id: i.id,
-          type: i.blob.type,
-          data: await blobToBase64(i.blob),
-          createdAt: i.createdAt,
-        })),
+        (await db.images.toArray()).map(async (i) => {
+          const blob = imageBlob(i)
+          return { id: i.id, type: blob.type, data: await blobToBase64(blob), createdAt: i.createdAt }
+        }),
       )
     : []
   const data = {
@@ -51,7 +49,8 @@ export async function importBackup(file: Blob) {
 
   const images = (data.images ?? []).map((i: { id: string; type: string; data: string; createdAt: number }) => ({
     id: i.id,
-    blob: new Blob([Uint8Array.from(atob(i.data), (c) => c.charCodeAt(0))], { type: i.type }),
+    data: Uint8Array.from(atob(i.data), (c) => c.charCodeAt(0)).buffer,
+    type: i.type,
     createdAt: i.createdAt,
   }))
 

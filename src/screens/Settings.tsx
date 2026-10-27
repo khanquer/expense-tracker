@@ -263,6 +263,7 @@ function DataSettings() {
   const counts = useLiveQuery(async () => ({ expenses: await db.expenses.count(), images: await db.images.count() }), [])
   const [storage, setStorage] = useState<{ used: number; persisted: boolean } | null>(null)
   const lastBackup = useLiveQuery(async () => (await db.settings.get('lastBackup'))?.value, [])
+  const keepImages = useLiveQuery(async () => (await db.settings.get('keepImages'))?.value === '1', [])
 
   useEffect(() => {
     void (async () => {
@@ -297,6 +298,18 @@ function DataSettings() {
           icon="phone"
           title="Stored only on this phone"
           sub={`${counts?.expenses ?? 0} expenses · ${counts?.images ?? 0} receipt images${storage ? ` · ${(storage.used / 1024 / 1024).toFixed(1)} MB` : ''}`}
+        />
+        <Switch
+          checked={!!keepImages}
+          onChange={(v) => setSetting('keepImages', v ? '1' : '0')}
+          label={
+            <span className="row-text" style={{ paddingLeft: 56 }}>
+              <span className="row-title">Keep a copy of receipt photos</span>
+              <span className="row-sub" style={{ whiteSpace: 'normal' }}>
+                Off: photos are only used for reading, then discarded. Your originals stay in your gallery.
+              </span>
+            </span>
+          }
         />
         {storage && !storage.persisted && (
           <Row icon="alert" tone="warn" title="Install the app to keep data safe" sub="Until it's installed, Chrome may clear it when space runs low." />

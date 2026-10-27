@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type Fees } from '../db'
+import { db, imageBlob, type Fees } from '../db'
 import { useCategories } from '../hooks'
 import {
   emptyItem,
@@ -15,6 +15,7 @@ import {
 } from '../lib/draft'
 import { formatDate, money, moneyPrecise, round2 } from '../lib/format'
 import { describeQuantity, UNIT_CHOICES, unitPrice } from '../lib/units'
+import { withTimeout } from '../lib/async'
 import { Icon } from './Icon'
 import { NumField } from './NumField'
 import { AppBar, Badge, IconButton, SectionLabel, useObjectUrl } from './ui'
@@ -23,7 +24,8 @@ interface Props {
   initial: Draft
   /** App bar title for the summary (or the form, when there is no summary). */
   title: string
-  onSaved: (id: string, total: number) => void
+  /** `warning` is set when the expense saved but an optional part (the photo) didn't. */
+  onSaved: (id: string, total: number, warning?: string) => void
   /** Leaving the screen from the top level. */
   onCancel: () => void
   /** Start with a read-only receipt view (bills Gemini filled in, saved expenses) instead of the form. */
@@ -103,9 +105,13 @@ export function ExpenseForm({ initial, title, onSaved, onCancel, summaryFirst, n
     }
     setSaving(true)
     try {
-      onSaved(await saveDraft(final), final.total)
+      const { id, warning } = await withTimeout(saveDraft(final), 20_000, "Saving didn't finish after 20 seconds")
+      onSaved(id, final.total, warning)
     } catch (err) {
-      setErrors([`Could not save: ${(err as Error).message}`])
+      // Show the real reason: it's the only way to diagnose a failure on the phone.
+      console.error('save failed', err)
+      const e = err as Error
+      setErrors([`Couldn't save. ${e.message}${e.name && e.name !== 'Error' ? ` (${e.name})` : ''}. Please try again.`])
       setSaving(false)
     }
   }
@@ -377,7 +383,10 @@ function FeeLine({ label, amount }: { label: string; amount: number }) {
 
 /** Object URL for the bill's first image (new or saved), for the receipt header. */
 function useFirstImage(d: Draft) {
-  const saved = useLiveQuery(async () => (d.imageIds[0] ? (await db.images.get(d.imageIds[0]))?.blob : undefined), [d.imageIds[0]])
+  const saved = useLiveQuery(async () => {
+    const img = d.imageIds[0] ? await db.images.get(d.imageIds[0]) : undefined
+    return img && imageBlob(img)
+  }, [d.imageIds[0]])
   return useObjectUrl(d.newImages[0] ?? saved)
 }
 
@@ -506,11 +515,15 @@ function Images({
   onRemoveSaved: (id: string) => void
   onRemoveNew: (b: Blob) => void
 }) {
-  const saved = useLiveQuery(() => db.images.bulkGet(imageIds), [imageIds.join(',')])
+  // Blobs are built inside the query so they keep their identity between renders.
+  const saved = useLiveQuery(
+    async () => (await db.images.bulkGet(imageIds)).flatMap((img) => (img ? [{ id: img.id, blob: imageBlob(img) }] : [])),
+    [imageIds.join(',')],
+  )
   if (imageIds.length === 0 && newImages.length === 0) return null
   return (
     <div className="thumbs">
-      {saved?.map((img) => img && <Thumb key={img.id} blob={img.blob} onRemove={() => onRemoveSaved(img.id)} />)}
+      {saved?.map((img) => <Thumb key={img.id} blob={img.blob} onRemove={() => onRemoveSaved(img.id)} />)}
       {newImages.map((b, i) => (
         <Thumb key={i} blob={b} onRemove={() => onRemoveNew(b)} />
       ))}

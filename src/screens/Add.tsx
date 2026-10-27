@@ -150,9 +150,9 @@ export function Add() {
             </div>
           )
         }
-        onSaved={(id, total) => {
+        onSaved={(id, total, warning) => {
           haptic()
-          toast(`Saved ${money(total)}`, { label: 'Undo', run: () => void deleteExpense(id) })
+          toast(warning ?? `Saved ${money(total)}`, { label: 'Undo', run: () => void deleteExpense(id) })
           leave()
         }}
         onCancel={leave}

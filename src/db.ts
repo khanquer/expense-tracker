@@ -73,9 +73,16 @@ export interface Alias {
 
 export interface StoredImage {
   id: string
-  blob: Blob
+  /** Image bytes. Plain data rather than a Blob: the most portable thing to keep in IndexedDB. */
+  data?: ArrayBuffer
+  type?: string
+  /** Records saved by earlier versions hold the Blob directly. */
+  blob?: Blob
   createdAt: number
 }
+
+export const imageBlob = (img: StoredImage) =>
+  img.blob ?? new Blob([img.data ?? new ArrayBuffer(0)], { type: img.type || 'image/jpeg' })
 
 export interface Setting {
   key: string
