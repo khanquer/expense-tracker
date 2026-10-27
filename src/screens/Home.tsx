@@ -109,7 +109,7 @@ export function Home() {
         </div>
       </section>
 
-      {hasAny === false ? (
+      {hasAny === undefined ? null : hasAny === false ? (
         <div className="card">
           <EmptyState icon="camera" title="No expenses yet">
             Tap <b>+</b> to scan a receipt or share a Swiggy or Zomato screenshot.
